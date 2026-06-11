@@ -1,0 +1,56 @@
+services:
+  app:
+    container_name: ${PROJECT_NAME}_app
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - ${APP_PORT}:10000
+    environment:
+      - DB_HOST=db
+      - CACHE_HOST=cache
+    depends_on:
+      db:
+        condition: service_healthy
+      cache:
+        condition: service_started
+    networks:
+      - chat_network
+
+  db:
+    container_name: ${PROJECT_NAME}_db
+    image: scylladb/scylla:2026.1
+    command: --smp 2 --memory 2G --developer-mode=1 
+    volumes:
+      - db:/var/lib/scylla
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh -e 'describe cluster'"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+    ports:
+      - ${DB_PORT}:9042
+    networks:
+      - chat_network
+
+  cache:
+    container_name: ${PROJECT_NAME}_cache
+    image: valkey/valkey:8.0
+    restart: unless-stopped
+    ports:
+      - ${CACHE_PORT}:6379
+    volumes:
+      - cache_data:/data
+    networks:
+      - chat_network
+
+networks:
+  chat_network:
+    driver: bridge
+
+volumes:
+  db:
+  cache_data:

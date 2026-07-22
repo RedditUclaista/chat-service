@@ -10,6 +10,11 @@ services:
     environment:
       - DB_HOST=db
       - CACHE_HOST=cache
+      - QUEUE_HOST=shared_mq
+      - QUEUE_USER=guest
+      - QUEUE_PASS=guest
+      - MQ_VHOST=/
+      - JWT_SECRET=esto es una key re segura
     depends_on:
       db:
         condition: service_healthy
@@ -17,6 +22,7 @@ services:
         condition: service_started
     networks:
       - chat_network
+      - lab3_shared_network
 
   db:
     container_name: ${PROJECT_NAME}_db
@@ -50,6 +56,8 @@ services:
 networks:
   chat_network:
     driver: bridge
+  lab3_shared_network:
+    external: true
 
 volumes:
   db:

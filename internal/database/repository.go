@@ -21,4 +21,8 @@ type ChatRepository interface {
 	GetRoomMembers(ctx context.Context, roomID gocql.UUID) ([]entities.ChatRoomMember, error)
 
 	GetRoomByID(ctx context.Context, roomID gocql.UUID) (*entities.ChatRoom, error)
+
+	SaveMessage(ctx context.Context, msg entities.Message) error
+
+	IsMember(ctx context.Context, roomID, userID gocql.UUID) (bool, error)
 }

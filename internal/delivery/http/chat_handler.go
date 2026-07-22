@@ -1,35 +1,35 @@
 package http
 
 import (
+	"errors"
 	"net/http"
 
+	"github.com/RedditUclaista/chat-service/internal/dto"
+	"github.com/RedditUclaista/chat-service/internal/errs"
+	"github.com/RedditUclaista/chat-service/internal/usecases"
+	ws "github.com/RedditUclaista/chat-service/internal/delivery/websocket"
 	"github.com/gocql/gocql"
 	"github.com/labstack/echo/v5"
-	"github.com/RedditUclaista/chat-service/internal/dto"
-	"github.com/RedditUclaista/chat-service/internal/usecases"
 )
 
-// ChatHandler agrupa los handlers HTTP del chat.
-// Solo deserializa el request, llama al usecase y escribe la respuesta.
-// Cero lógica de negocio aquí.
 type ChatHandler struct {
-	usecase *usecases.ChatUseCase
+	usecase   *usecases.ChatUseCase
+	wsHandler *ws.Handler
 }
 
-func NewChatHandler(uc *usecases.ChatUseCase) *ChatHandler {
-	return &ChatHandler{usecase: uc}
+func NewChatHandler(uc *usecases.ChatUseCase, ws *ws.Handler) *ChatHandler {
+	return &ChatHandler{usecase: uc, wsHandler: ws}
 }
 
-// RegisterRoutes registra los 3 endpoints REST en el grupo dado.
 func (h *ChatHandler) RegisterRoutes(g *echo.Group) {
 	g.POST("/rooms", h.CreateRoom)
 	g.GET("/rooms", h.GetUserRooms)
 	g.GET("/rooms/:id/messages", h.GetRoomMessages)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// POST /api/v1/chats/rooms
-// ─────────────────────────────────────────────────────────────────────────────
+func (h *ChatHandler) RegisterWSRoute(g *echo.Group) {
+	g.GET("/ws", h.wsHandler.HandleWS)
+}
 
 func (h *ChatHandler) CreateRoom(c *echo.Context) error {
 	creatorID, err := getUserIDFromContext(c)
@@ -39,7 +39,7 @@ func (h *ChatHandler) CreateRoom(c *echo.Context) error {
 
 	var req dto.CreateRoomRequest
 	if err := c.Bind(&req); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "body inválido: "+err.Error())
+		return echo.NewHTTPError(http.StatusBadRequest, "body invalido: "+err.Error())
 	}
 	if err := c.Validate(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
@@ -47,15 +47,14 @@ func (h *ChatHandler) CreateRoom(c *echo.Context) error {
 
 	room, err := h.usecase.CreateRoom(c.Request().Context(), creatorID, req)
 	if err != nil {
+		if errors.Is(err, errs.ErrDirectRoomExists) || errors.Is(err, errs.ErrInvalidRoomType) {
+			return echo.NewHTTPError(http.StatusConflict, err.Error())
+		}
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
 
 	return c.JSON(http.StatusCreated, room)
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// GET /api/v1/chats/rooms
-// ─────────────────────────────────────────────────────────────────────────────
 
 func (h *ChatHandler) GetUserRooms(c *echo.Context) error {
 	userID, err := getUserIDFromContext(c)
@@ -75,33 +74,29 @@ func (h *ChatHandler) GetUserRooms(c *echo.Context) error {
 	return c.JSON(http.StatusOK, rooms)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// GET /api/v1/chats/rooms/:id/messages
-// ─────────────────────────────────────────────────────────────────────────────
-
 func (h *ChatHandler) GetRoomMessages(c *echo.Context) error {
 	userID, err := getUserIDFromContext(c)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusUnauthorized, "usuario no autenticado")
 	}
 
-	roomID, err := gocql.ParseUUID(c.PathParam("id"))
+	roomID, err := gocql.ParseUUID(c.Param("id"))
 	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "room_id inválido: debe ser un UUID")
+		return echo.NewHTTPError(http.StatusBadRequest, "room_id invalido: debe ser un UUID")
 	}
 
 	var req dto.GetMessagesRequest
 	if err := c.Bind(&req); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "parámetros inválidos")
-	}
-	if req.Limit == 0 {
-		req.Limit = 30
+		return echo.NewHTTPError(http.StatusBadRequest, "parametros invalidos")
 	}
 
 	result, err := h.usecase.GetRoomMessages(c.Request().Context(), userID, roomID, req)
 	if err != nil {
-		if err.Error() == "acceso denegado: el usuario no es miembro de esta sala" {
+		if errors.Is(err, errs.ErrNotMember) {
 			return echo.NewHTTPError(http.StatusForbidden, err.Error())
+		}
+		if errors.Is(err, errs.ErrInvalidCursor) {
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 		}
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
@@ -109,12 +104,6 @@ func (h *ChatHandler) GetRoomMessages(c *echo.Context) error {
 	return c.JSON(http.StatusOK, result)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Helper: extraer userID del contexto JWT
-// ─────────────────────────────────────────────────────────────────────────────
-
-// getUserIDFromContext extrae el UUID del usuario autenticado.
-// El middleware JWT lo inyecta con la key "user_id" antes de llegar al handler.
 func getUserIDFromContext(c *echo.Context) (gocql.UUID, error) {
 	val := c.Get("user_id")
 	if val == nil {

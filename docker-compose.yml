@@ -10,10 +10,10 @@ services:
     environment:
       - DB_HOST=db
       - CACHE_HOST=cache
-      - QUEUE_HOST=shared_mq
+      - QUEUE_HOST=lab3_mq
       - QUEUE_USER=guest
       - QUEUE_PASS=guest
-      - MQ_VHOST=/
+      - MQ_VHOST=core
       - JWT_SECRET=esto es una key re segura
     depends_on:
       db:

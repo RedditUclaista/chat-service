@@ -44,6 +44,10 @@ func RunMigrations(cfg MigrateConfig) error {
 	}
 	defer targetSession.Close()
 
+	if err := targetSession.Query(`DROP TABLE IF EXISTS active_chats_by_user`).Exec(); err != nil {
+		slog.Warn("no se pudo dropear tabla vieja active_chats_by_user", "error", err)
+	}
+
 	tables := []struct{ name, cql string }{
 		{"chat_rooms", chatRoomsTableCQL},
 		{"chat_room_members", chatRoomMembersTableCQL},
@@ -95,11 +99,11 @@ const messagesByRoomTableCQL = `
 const activeChatsByUserTableCQL = `
 	CREATE TABLE IF NOT EXISTS active_chats_by_user (
 		user_id UUID,
-		last_activity TIMESTAMP,
 		room_id UUID,
-		last_message_preview TEXT,
-		unread_count INT,
 		room_name TEXT,
 		room_type TEXT,
-		PRIMARY KEY (user_id, last_activity)
-	) WITH CLUSTERING ORDER BY (last_activity DESC)`
+		last_activity TIMESTAMP,
+		last_message_preview TEXT,
+		unread_count INT,
+		PRIMARY KEY (user_id, room_id)
+	)`

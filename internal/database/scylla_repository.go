@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/RedditUclaista/chat-service/internal/entities"
@@ -124,7 +125,7 @@ func (r *scyllaRepository) IsMember(ctx context.Context, roomID, userID gocql.UU
 
 func (r *scyllaRepository) GetActiveChatsForUser(ctx context.Context, userID gocql.UUID) ([]entities.ActiveChatByUser, error) {
 	iter := r.session.Query(
-		`SELECT user_id, last_activity, room_id, last_message_preview, unread_count, room_name, room_type
+		`SELECT user_id, room_id, room_name, room_type, last_activity, last_message_preview, unread_count
 		 FROM active_chats_by_user
 		 WHERE user_id = ?`,
 		userID,
@@ -132,10 +133,18 @@ func (r *scyllaRepository) GetActiveChatsForUser(ctx context.Context, userID goc
 
 	var chats []entities.ActiveChatByUser
 	var c entities.ActiveChatByUser
-	for iter.Scan(&c.UserID, &c.LastActivity, &c.RoomID, &c.LastMessagePreview, &c.UnreadCount, &c.RoomName, &c.RoomType) {
+	for iter.Scan(&c.UserID, &c.RoomID, &c.RoomName, &c.RoomType, &c.LastActivity, &c.LastMessagePreview, &c.UnreadCount) {
 		chats = append(chats, c)
 	}
-	return chats, iter.Close()
+	if err := iter.Close(); err != nil {
+		return nil, err
+	}
+
+	sort.Slice(chats, func(i, j int) bool {
+		return chats[i].LastActivity.After(chats[j].LastActivity)
+	})
+
+	return chats, nil
 }
 
 func (r *scyllaRepository) UpsertActiveChatForUsers(ctx context.Context, memberIDs []gocql.UUID, chat entities.ActiveChatByUser) error {
@@ -144,15 +153,15 @@ func (r *scyllaRepository) UpsertActiveChatForUsers(ctx context.Context, memberI
 	for _, uid := range memberIDs {
 		batch.Query(
 			`INSERT INTO active_chats_by_user
-			 (user_id, last_activity, room_id, last_message_preview, unread_count, room_name, room_type)
+			 (user_id, room_id, room_name, room_type, last_activity, last_message_preview, unread_count)
 			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 			uid,
-			chat.LastActivity,
 			chat.RoomID,
-			chat.LastMessagePreview,
-			chat.UnreadCount,
 			chat.RoomName,
 			chat.RoomType,
+			chat.LastActivity,
+			chat.LastMessagePreview,
+			chat.UnreadCount,
 		)
 	}
 
